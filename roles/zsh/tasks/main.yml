@@ -1,0 +1,148 @@
+# SPDX-License-Identifier: MIT-0
+---
+# tasks file for zsh
+
+- name: Install zsh package
+  ansible.builtin.package:
+    name: zsh
+    state: present
+  become: true
+
+- name: Install git (required for oh-my-zsh)
+  ansible.builtin.package:
+    name: git
+    state: present
+  become: true
+
+- name: Install curl (required for oh-my-zsh installation)
+  ansible.builtin.package:
+    name: curl
+    state: present
+  become: true
+
+- name: Install unzip (required for oh-my-posh installation)
+  ansible.builtin.package:
+    name: unzip
+    state: present
+  become: true
+
+- name: Check if oh-my-zsh is already installed
+  ansible.builtin.stat:
+    path: "{{ zsh_user_home }}/.oh-my-zsh"
+  register: zsh_ohmyzsh_stat
+  become: true
+
+- name: Download and install oh-my-zsh
+  ansible.builtin.shell: |
+    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+  become: true
+  become_user: "{{ zsh_user }}"
+  when: not zsh_ohmyzsh_stat.stat.exists
+  args:
+    creates: "{{ zsh_user_home }}/.oh-my-zsh"
+
+- name: Create oh-my-posh installation directory
+  ansible.builtin.file:
+    path: "{{ zsh_ohmyposh_install_dir }}"
+    state: directory
+    owner: "{{ zsh_user }}"
+    group: "{{ zsh_user }}"
+    mode: '0755'
+  become: true
+  when: zsh_enable_ohmyposh | bool
+
+- name: Check if oh-my-posh is already installed
+  ansible.builtin.stat:
+    path: "{{ zsh_ohmyposh_install_dir }}/oh-my-posh"
+  register: zsh_ohmyposh_stat
+  # Other accounts' homes are 0750, so the connecting user cannot see inside.
+  become: true
+  when: zsh_enable_ohmyposh | bool
+
+# Downloaded once and shared by every account; get_url leaves an existing file alone.
+- name: Download the oh-my-posh installer
+  ansible.builtin.get_url:
+    url: https://ohmyposh.dev/install.sh
+    dest: /usr/local/share/oh-my-posh-install.sh
+    mode: '0755'
+  become: true
+  when: zsh_enable_ohmyposh | bool and not zsh_ohmyposh_stat.stat.exists
+
+- name: Install oh-my-posh using the official installer
+  ansible.builtin.command:
+    cmd: "bash /usr/local/share/oh-my-posh-install.sh -d {{ zsh_ohmyposh_install_dir }}"
+    creates: "{{ zsh_ohmyposh_install_dir }}/oh-my-posh"
+  become: true
+  become_user: "{{ zsh_user }}"
+  when: zsh_enable_ohmyposh | bool and not zsh_ohmyposh_stat.stat.exists
+
+- name: Add oh-my-posh to PATH
+  ansible.builtin.lineinfile:
+    path: "{{ zsh_user_home }}/.zshenv"
+    line: 'export PATH="{{ zsh_ohmyposh_install_dir }}:$PATH"'
+    create: true
+    owner: "{{ zsh_user }}"
+    group: "{{ zsh_user }}"
+    mode: '0644'
+  become: true
+  when: zsh_enable_ohmyposh | bool
+
+- name: Check whether the Meslo Nerd Font is already installed
+  ansible.builtin.find:
+    paths: "{{ zsh_user_home }}/.local/share/fonts"
+    patterns: "Meslo*"
+    file_type: file
+    # oh-my-posh installs each font family into its own subdirectory.
+    recurse: true
+  register: zsh_meslo_fonts
+  become: true
+  when: zsh_install_fonts | bool and zsh_enable_ohmyposh | bool
+
+- name: Install Nerd Fonts using oh-my-posh CLI
+  ansible.builtin.shell: |
+    export PATH="{{ zsh_ohmyposh_install_dir }}:$PATH"
+    oh-my-posh font install meslo
+  become: true
+  become_user: "{{ zsh_user }}"
+  when:
+    - zsh_install_fonts | bool
+    - zsh_enable_ohmyposh | bool
+    - (zsh_meslo_fonts.matched | default(0)) == 0
+  # Only reached when the font is missing, so running it really is a change.
+  changed_when: true
+
+- name: Configure .zshrc with oh-my-zsh and oh-my-posh
+  ansible.builtin.template:
+    src: zshrc.j2
+    dest: "{{ zsh_user_home }}/.zshrc"
+    owner: "{{ zsh_user }}"
+    group: "{{ zsh_user }}"
+    mode: '0644'
+    backup: true
+  become: true
+
+- name: Get current user shell
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ zsh_user }}"
+  register: zsh_user_info
+
+- name: Set zsh as default shell for user
+  ansible.builtin.user:
+    name: "{{ zsh_user }}"
+    shell: /bin/zsh
+  become: true
+  when: zsh_user_info.ansible_facts.getent_passwd[zsh_user][5] != '/bin/zsh'
+  notify: Notify shell change
+
+- name: Install common zsh plugins
+  ansible.builtin.git:
+    repo: "{{ item.repo }}"
+    dest: "{{ zsh_user_home }}/.oh-my-zsh/custom/plugins/{{ item.name }}"
+    version: master
+    depth: 1
+    single_branch: true
+  become: true
+  become_user: "{{ zsh_user }}"
+  loop: "{{ zsh_plugins }}"
+  when: zsh_install_plugins | bool

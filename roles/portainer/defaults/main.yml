@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT-0
+---
+# defaults file for portainer
+
+# Portainer deployment directory
+portainer_deploy_dir: "/opt/portainer"
+
+# Docker compose settings
+portainer_compose_project_name: "portainer"
+
+# Minikube settings
+portainer_deploy_to_minikube: true

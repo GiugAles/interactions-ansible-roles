@@ -1,0 +1,25 @@
+# {{ ansible_managed }}
+services:
+  tailscale:
+    image: {{ tailscale_image }}
+    container_name: {{ tailscale_container_name }}
+    hostname: {{ tailscale_hostname }}
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY:?TS_AUTHKEY is required}
+      - TS_HOSTNAME={{ tailscale_hostname }}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE={{ tailscale_userspace | bool | lower }}
+{% if tailscale_extra_args %}
+      - TS_EXTRA_ARGS={{ tailscale_extra_args }}
+{% endif %}
+    volumes:
+      - {{ tailscale_compose_dir }}/state:/var/lib/tailscale
+{% if not tailscale_userspace %}
+    devices:
+      - /dev/net/tun:/dev/net/tun
+{% endif %}
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    network_mode: host
+    restart: unless-stopped

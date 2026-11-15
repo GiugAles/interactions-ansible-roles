@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: MIT-0
+galaxy_info:
+  author: Infrastructure Team
+  description: Deploys Portainer CE using Docker Compose with optional Kubernetes integration
+  company: Home Infrastructure
+
+  license: MIT-0
+
+  min_ansible_version: "2.9"
+
+  platforms:
+    - name: Ubuntu
+      versions:
+        - focal
+        - jammy
+    - name: Debian
+      versions:
+        - bullseye
+        - bookworm
+
+  galaxy_tags:
+    - docker
+    - portainer
+    - kubernetes
+    - containers
+    - management
+    - minikube
+
+dependencies:
+  - geerlingguy.docker  # Portainer requires Docker to be installed
+
+collections:
+  - community.docker  # Required for docker_compose_v2 module
+  - kubernetes.core   # Required for Kubernetes operations (if using K8s modules instead of kubectl)

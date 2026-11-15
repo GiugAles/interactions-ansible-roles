@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: MIT-0
+---
+# defaults file for aiopslab
+
+# present: build the controller image and ensure the container (and, for the kind target,
+# the local cluster) are up. absent: tear back down everything this role created.
+aiopslab_state: "{{ lookup('env', 'AIOPSLAB_STATE') | default('present', true) }}"
+
+# Which cluster to run experiments against. k3s uses antillean's existing kubeconfig for the
+# real Turing Pi cluster (see pb-k3s-control-plane.yml); kind creates a local cluster on
+# antillean itself, per AIOpsLab's own README. Pass -e aiopslab_target=kind to switch -
+# install and uninstall must be called with the same target.
+aiopslab_target: k3s
+
+# git ref the controller image is built from; bumping this and re-running rebuilds the
+# image, mirroring the cert_manager_version upgrade idiom used elsewhere for Helm charts.
+aiopslab_version: main
+aiopslab_repo_url: https://github.com/microsoft/AIOpsLab.git
+
+# Set together with aiopslab_state=present to also run one experiment after provisioning.
+# Real IDs come from aiopslab/orchestrator/problems/registry.py in the AIOpsLab repo, e.g.
+# k8s_target_port-misconfig-detection-1. Leave empty to only provision the environment.
+aiopslab_problem_id: ""
+# One of the keys in AIOpsLab's clients/registry.py AgentRegistry: gpt, qwen, deepseek,
+# vllm, openrouter, generic.
+aiopslab_agent: gpt
+aiopslab_max_steps: 30
+
+aiopslab_image_name: "aiopslab:{{ aiopslab_version }}"
+aiopslab_container_name: "aiopslab-{{ aiopslab_target }}"
+# Where the image's build context (files/docker/) is copied to on antillean before building -
+# community.docker.docker_image builds on the target host, which doesn't have this repo
+# checked out, so the Dockerfile has to travel there first. Not target-suffixed: the image
+# itself is target-agnostic, shared between the k3s and kind targets.
+aiopslab_build_dir: "~{{ kube_user }}/aiopslab-build"
+
+# Directory on antillean, owned by kube_user, holding state this role owns: a dedicated
+# kubeconfig for whichever target is active, the kind cluster's config (kind target), the
+# rendered config.yml, and fetched results.
+aiopslab_state_dir: "~{{ kube_user }}/aiopslab-{{ aiopslab_target }}"
+aiopslab_results_dir: "{{ aiopslab_state_dir }}/results"
+
+# Dedicated kubeconfig this role builds itself and mounts into the container - for k3s,
+# fetched fresh from the k3s server node's /etc/rancher/k3s/k3s.yaml with its server address
+# rewritten (k3s.yaml defaults to 127.0.0.1, only valid on the server itself); for kind,
+# written by `kind create cluster` below. Deliberately never reads or writes antillean's own
+# ~/.kube/config - that file may be stale, point at something else entirely (a previous
+# minikube setup, say), or not exist, and none of that should matter to this role.
+aiopslab_kubeconfig: "{{ aiopslab_state_dir }}/kubeconfig"
+
+# --- k3s target ---
+# Chaos Mesh's default containerd socket path only matches kind nodes; k3s's embedded
+# containerd listens elsewhere, so the k3s target pre-installs Chaos Mesh itself with the
+# corrected path (AIOpsLab would otherwise try and fail to auto-install it at fault-injection
+# time).
+aiopslab_chaos_mesh_version: "2.6.2"
+aiopslab_chaos_mesh_namespace: chaos-mesh
+aiopslab_chaos_mesh_containerd_socket: /run/k3s/containerd/containerd.sock
+
+# --- kind target ---
+# AIOpsLab hardcodes the kubeconfig context "kind-<AIOPSLAB_CLUSTER or 'kind'>" when
+# k8s_host: kind, so keep this at kind's own default cluster name unless AIOPSLAB_CLUSTER is
+# also threaded through to the experiment run.
+aiopslab_kind_cluster_name: kind
+aiopslab_kind_config: "{{ aiopslab_state_dir }}/kind-config-arm.yaml"
+
+# Mount the control node's SSH keys (read-only) into the container. Neither target needs
+# this today - both reach their cluster through a local kubeconfig - it's wired in for a
+# future target that would need an outbound SSH hop.
+aiopslab_mount_ssh_keys: false
+
+# LLM API key for the chosen agent, injected only into the one-shot experiment `docker exec`
+# (never into the container's persistent config/env). Sourced from the ansible-vault by
+# pb-aiopslab.yml's vars_files; empty here so the role also works standalone without it.
+aiopslab_llm_api_key: "{{ vault_aiopslab_openai_api_key | default('') }}"

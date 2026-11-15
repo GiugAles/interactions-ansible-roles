@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: MIT-0
+galaxy_info:
+  author: Infrastructure Team
+  description: Runs AIOpsLab experiments against a k3s or kind cluster from a Docker container
+  company: Home Infrastructure
+
+  license: MIT-0
+
+  min_ansible_version: "2.9"
+
+  platforms:
+    - name: Debian
+      versions:
+        - bullseye
+        - bookworm
+
+  galaxy_tags:
+    - docker
+    - kubernetes
+    - aiops
+    - chaosengineering
+
+dependencies: []
+# geerlingguy.helm is deliberately not used here: v1.0.1 (the version pinned in this repo's
+# requirements.yml) hardcodes the linux-amd64 Helm release with no architecture detection,
+# which silently installs a non-executable binary on antillean's ARM64 (aarch64) hardware.
+# tasks/install.yml installs Helm itself via the official get-helm-3 script instead, which
+# does detect the architecture correctly.
+
+collections:
+  - community.docker  # docker_image / docker_container / docker_container_exec modules

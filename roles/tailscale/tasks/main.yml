@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: MIT-0
+---
+# tasks file for tailscale
+
+- name: Read TS_AUTHKEY from the dotenv file on the control node
+  ansible.builtin.set_fact:
+    tailscale_authkey: >-
+      {{ lookup('file', tailscale_env_file, errors='ignore')
+         | default('', true)
+         | regex_search('^[ \t]*(?:export[ \t]+)?TS_AUTHKEY[ \t]*=[ \t]*["\']?([^"\'\r\n]*)',
+                        '\1', multiline=True)
+         | default([''], true)
+         | first
+         | trim }}
+  no_log: true
+  when: not tailscale_authkey
+
+- name: Fail early when no auth key is available
+  ansible.builtin.assert:
+    that:
+      - tailscale_authkey | length > 0
+    fail_msg: >-
+      No tailscale auth key found. Add a TS_AUTHKEY=tskey-auth-... line to
+      {{ tailscale_env_file }} on the control node, or pass -e tailscale_authkey=...
+
+- name: Ensure the tailscale compose directory exists
+  ansible.builtin.file:
+    path: "{{ tailscale_compose_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Ensure the tailscale state directory exists
+  ansible.builtin.file:
+    path: "{{ tailscale_compose_dir }}/state"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Deploy the tailscale dotenv file holding the auth key
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ tailscale_compose_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart tailscale
+
+- name: Deploy docker-compose.yml for tailscale
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ tailscale_compose_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart tailscale
+
+- name: Deploy the tailscale container with Docker Compose v2
+  community.docker.docker_compose_v2:
+    project_src: "{{ tailscale_compose_dir }}"
+    project_name: "{{ tailscale_compose_project_name }}"
+    state: present
+
+- name: Flush handlers so the status check sees the current container
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait until the node is registered in the tailnet
+  ansible.builtin.command:
+    cmd: docker exec {{ tailscale_container_name }} tailscale status --json
+  register: tailscale_status
+  changed_when: false
+  failed_when: false
+  retries: 12
+  delay: 5
+  until:
+    - tailscale_status.rc == 0
+    - (tailscale_status.stdout | from_json).BackendState | default('') == "Running"
+
+- name: Report the tailnet addresses of this device
+  ansible.builtin.debug:
+    msg: >-
+      {{ tailscale_hostname }} joined the tailnet as
+      {{ (tailscale_status.stdout | from_json).Self.TailscaleIPs | default(['<unknown>']) | join(', ') }}
+  when: tailscale_status.rc == 0

@@ -1,0 +1,18 @@
+---
+# defaults file for users
+
+# Accounts to manage. Every entry needs a `name`; the optional keys are
+# `comment`, `uid`, `shell`, `groups` (extra supplementary groups) and
+# `ssh_keys` (a list of public keys authorised for the account).
+users_list: []
+
+# Supplementary group that every managed account joins. Set to "" to skip it.
+users_group: ""
+
+# Shell for accounts that do not carry an explicit `shell`. Empty means the
+# shell is left alone, which is what you want when a later role (zsh) owns it --
+# setting a value here makes the two roles toggle the shell on every run.
+users_default_shell: ""
+
+# Give the managed accounts a home directory.
+users_create_home: true

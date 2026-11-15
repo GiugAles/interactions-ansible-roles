@@ -1,0 +1,15 @@
+---
+# vars file for minikube_shared
+#
+# Derived from the variables above; in vars/ rather than defaults/ so a caller
+# cannot set them to something that disagrees with `minikube_shared_owner`.
+
+minikube_shared_owner_home: "/home/{{ minikube_shared_owner }}"
+
+# Pins minikube's state to the owner's home. Ansible's sudo become already sets
+# HOME via its default `-H` flag, but spelling it out means the cluster cannot
+# land in /root (or anyone else's home) if become is ever configured
+# differently -- the "only one account runs a cluster" rule stops depending on it.
+minikube_shared_owner_env:
+  HOME: "{{ minikube_shared_owner_home }}"
+  KUBECONFIG: "{{ minikube_shared_owner_home }}/.kube/config"

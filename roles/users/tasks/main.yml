@@ -1,0 +1,33 @@
+---
+# tasks file for users
+
+- name: Ensure the shared supplementary group exists
+  ansible.builtin.group:
+    name: "{{ users_group }}"
+    state: present
+  when: users_group | length > 0
+
+- name: Ensure the managed accounts exist
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    comment: "{{ item['comment'] | default(omit) }}"
+    uid: "{{ item['uid'] | default(omit) }}"
+    # Left unmanaged unless asked for: the zsh role owns the shell, and
+    # forcing a default here would fight it into a change on every run.
+    shell: "{{ item['shell'] | default(users_default_shell) | default(omit, true) }}"
+    groups: "{{ (([users_group] if users_group | length > 0 else []) + (item['groups'] | default([]))) | unique }}"
+    append: true
+    create_home: "{{ users_create_home }}"
+    state: present
+  loop: "{{ users_list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Ensure the authorised SSH keys are in place
+  ansible.posix.authorized_key:
+    user: "{{ item.0.name }}"
+    key: "{{ item.1 }}"
+    state: present
+  loop: "{{ users_list | subelements('ssh_keys', skip_missing=true) }}"
+  loop_control:
+    label: "{{ item.0.name }}"

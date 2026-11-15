@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: MIT-0
+---
+# defaults file for tailscale
+
+# Directory on the target host holding the compose project
+tailscale_compose_dir: /opt/tailscale
+
+# Compose project name
+tailscale_compose_project_name: tailscale
+
+# Container image and name
+tailscale_image: tailscale/tailscale:latest
+tailscale_container_name: tailscale
+
+# Device name shown in the tailnet, defaults to the ansible inventory host name
+tailscale_hostname: "{{ inventory_hostname }}"
+
+# Path (on the ansible control node) to the dotenv file providing TS_AUTHKEY
+tailscale_env_file: "{{ playbook_dir }}/.secrets/.env"
+
+# Auth key used to join the tailnet. Left empty so it is read from
+# tailscale_env_file; set it explicitly to bypass the dotenv lookup.
+tailscale_authkey: ""
+
+# Extra flags passed to `tailscale up` inside the container. Empty by default:
+# the node only needs to be reachable at its own tailnet address, it is not a
+# subnet router or exit node.
+tailscale_extra_args: ""
+
+# Run the tailscale daemon in userspace networking mode instead of using
+# /dev/net/tun. Keep false so the node can route/expose traffic normally.
+tailscale_userspace: false

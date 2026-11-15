@@ -1,0 +1,68 @@
+---
+# tasks file for minikube_shared
+#
+# Brings the owner's cluster up when it is down and resyncs the owner's
+# kubeconfig with its current address. The cluster is shared by logging into the
+# owner's account, so no task here reaches into another account's home directory.
+
+- name: Assert a cluster owner was named
+  ansible.builtin.assert:
+    that:
+      - minikube_shared_owner | length > 0
+    fail_msg: >-
+      minikube_shared_owner is empty. Refusing to guess which account should be
+      running the cluster.
+    quiet: true
+
+# Every task below runs as `minikube_shared_owner` and nobody else: no task is
+# looped over accounts, so exactly one account ever invokes the minikube binary.
+# `minikube_shared_become: false` says the connection already is that account,
+# which is how the on-host run gets there without any sudo rights.
+- name: Check whether the minikube cluster is already running
+  become: "{{ minikube_shared_become }}"
+  become_user: "{{ minikube_shared_owner }}"
+  environment: "{{ minikube_shared_owner_env }}"
+  ansible.builtin.command:
+    cmd: minikube status
+  register: minikube_shared_status
+  changed_when: false
+  failed_when: false
+
+- name: Start the minikube cluster
+  become: "{{ minikube_shared_become }}"
+  become_user: "{{ minikube_shared_owner }}"
+  environment: "{{ minikube_shared_owner_env }}"
+  ansible.builtin.command:
+    argv: "{{ ['minikube', 'start', '--driver=' ~ minikube_shared_driver] + minikube_shared_start_args }}"
+  register: minikube_shared_start
+  # `minikube status` exits non-zero as soon as one of the cluster's components
+  # is down, so a running cluster is never restarted.
+  when: minikube_shared_status.rc != 0
+  changed_when: minikube_shared_start.rc == 0
+
+# Docker recreates the minikube container on a fresh port mapping whenever it
+# restarts (e.g. after a host reboot), but the cached ~/.kube/config keeps
+# pointing at the old one. `minikube status` only checks that the
+# container/processes are up, so a start it skips (above) can still leave the
+# account unable to reach the API server. Always resync the context, even right
+# after a fresh start, since it is a cheap, idempotent no-op when the address is
+# already current.
+- name: Resync the owner's kubeconfig with the cluster's current address
+  become: "{{ minikube_shared_become }}"
+  become_user: "{{ minikube_shared_owner }}"
+  environment: "{{ minikube_shared_owner_env }}"
+  ansible.builtin.command:
+    cmd: minikube update-context
+  register: minikube_shared_update_context
+  # minikube prints "! No changes required", capitalised and possibly on stderr.
+  changed_when: >-
+    'no changes required' not in
+    (minikube_shared_update_context.stdout ~ minikube_shared_update_context.stderr) | lower
+
+- name: Verify the cluster answers with the kubeconfig it just wrote
+  become: "{{ minikube_shared_become }}"
+  become_user: "{{ minikube_shared_owner }}"
+  environment: "{{ minikube_shared_owner_env }}"
+  ansible.builtin.command:
+    cmd: kubectl cluster-info
+  changed_when: false

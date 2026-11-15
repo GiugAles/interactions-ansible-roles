@@ -1,0 +1,13 @@
+## SPDX-License-Identifier: MIT-0
+## Managed by roles/aiopslab - copied into the container's checkout as aiopslab/config.yml.
+## Field meanings per AIOpsLab's own aiopslab/config.yml.example.
+k8s_host: {{ 'kind' if aiopslab_target == 'kind' else 'localhost' }}
+k8s_user: {{ kube_user }}
+
+## Unused when k8s_host is localhost/kind (no SSH hop needed for either target this role
+## manages) - kept populated because AIOpsLab's config parser expects the key to exist.
+ssh_key_path: /root/.ssh/id_rsa
+
+data_dir: data
+qualitative_eval: false
+print_session: false

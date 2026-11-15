@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: MIT-0
+---
+# uninstall tasks for aiopslab
+#
+# Deliberately does not remove: the built aiopslab image (cheap to keep for the next
+# install, avoids a full re-clone+poetry install every run), the kind/kubectl/helm/docker
+# binaries or packages (shared system tooling, not aiopslab-specific state - same precedent
+# as this repo's other roles never reversing an apt/Galaxy-role install), or fetched
+# experiment results under aiopslab_results_dir (those are the user's data, not the tool).
+
+- name: Tear down the local kind cluster
+  when: aiopslab_target == 'kind'
+  become: true
+  block:
+    - name: Check whether kind is installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/kind
+      register: aiopslab_kind_bin
+
+    - name: List existing kind clusters
+      ansible.builtin.command: kind get clusters
+      register: aiopslab_kind_clusters
+      when: aiopslab_kind_bin.stat.exists
+      changed_when: false
+      failed_when: false
+
+    - name: Delete the kind cluster
+      ansible.builtin.command: >-
+        kind delete cluster --name {{ aiopslab_kind_cluster_name }}
+        --kubeconfig {{ aiopslab_kubeconfig }}
+      when: >-
+        aiopslab_kind_bin.stat.exists and
+        aiopslab_kind_cluster_name in aiopslab_kind_clusters.stdout_lines
+      changed_when: true
+
+    - name: Remove the kind cluster config
+      ansible.builtin.file:
+        path: "{{ aiopslab_kind_config }}"
+        state: absent
+
+- name: Check whether a dedicated k3s kubeconfig still exists
+  when: aiopslab_target == 'k3s'
+  ansible.builtin.stat:
+    path: "{{ aiopslab_kubeconfig }}"
+  register: aiopslab_k3s_kubeconfig_stat
+
+- name: Remove Chaos Mesh from the k3s cluster
+  # Nothing to do if the kubeconfig this role created is already gone - either never
+  # installed, or a previous uninstall run already got this far (this task's own kubeconfig
+  # cleanup at the end of this file removes it, so a second uninstall run must not assume it
+  # still exists).
+  when: aiopslab_target == 'k3s' and aiopslab_k3s_kubeconfig_stat.stat.exists
+  block:
+    # Raw helm/kubectl here rather than the kubernetes.core.k8s/k8s_info modules - those
+    # need the `kubernetes` Python package on antillean's own interpreter, which is exactly
+    # the kind of host-side artifact this role is meant to avoid leaving behind.
+    - name: Uninstall the chaos-mesh Helm release
+      ansible.builtin.command: >-
+        helm uninstall chaos-mesh --namespace {{ aiopslab_chaos_mesh_namespace }}
+        --kubeconfig {{ aiopslab_kubeconfig }}
+      register: aiopslab_chaos_mesh_uninstall
+      changed_when: "'uninstalled' in aiopslab_chaos_mesh_uninstall.stdout"
+      failed_when: >-
+        aiopslab_chaos_mesh_uninstall.rc != 0 and
+        'not found' not in (aiopslab_chaos_mesh_uninstall.stderr | default(''))
+
+    - name: Delete the chaos-mesh namespace
+      ansible.builtin.command: >-
+        kubectl --kubeconfig {{ aiopslab_kubeconfig }} delete namespace
+        {{ aiopslab_chaos_mesh_namespace }} --ignore-not-found
+      register: aiopslab_chaos_mesh_ns_delete
+      changed_when: "'deleted' in aiopslab_chaos_mesh_ns_delete.stdout"
+
+    - name: Delete any lingering chaos-mesh.org CRDs
+      ansible.builtin.shell: >-
+        set -o pipefail &&
+        kubectl --kubeconfig {{ aiopslab_kubeconfig }} get crd -o name
+        | { grep '\.chaos-mesh\.org$' || true; }
+        | xargs -r kubectl --kubeconfig {{ aiopslab_kubeconfig }} delete
+      args:
+        executable: /bin/bash
+      register: aiopslab_chaos_mesh_crds
+      changed_when: "'deleted' in aiopslab_chaos_mesh_crds.stdout"
+
+- name: Remove the AIOpsLab controller container
+  community.docker.docker_container:
+    name: "{{ aiopslab_container_name }}"
+    state: absent
+
+- name: Remove the rendered config.yml and dedicated kubeconfig
+  become: true
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ aiopslab_state_dir }}/config.yml"
+    - "{{ aiopslab_kubeconfig }}"

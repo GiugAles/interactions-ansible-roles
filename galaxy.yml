@@ -1,0 +1,25 @@
+---
+# Installed from git, never published to Galaxy (see README.md)
+namespace: interactions
+name: roles
+version: 0.1.0
+readme: README.md
+authors:
+  - Alessandro Giugno
+description: Ansible roles shared by the infrastructure repositories of the Interactions projects
+license:
+  - MIT
+tags:
+  - infrastructure
+  - docker
+  - kubernetes
+  - minikube
+dependencies:
+  ansible.posix: ">=1.5.0"
+  community.docker: ">=3.10.0"
+  kubernetes.core: ">=3.0.0"
+repository: https://github.com/GiugAles/interactions-ansible-roles
+issues: https://github.com/GiugAles/interactions-ansible-roles/issues
+build_ignore:
+  - .gitignore
+  - "*.tar.gz"

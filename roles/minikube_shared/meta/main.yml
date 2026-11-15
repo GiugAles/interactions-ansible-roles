@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  author: ansible-user
+  description: Run a minikube cluster for one account and share it with the others
+  company: ""
+  license: MIT-0
+  min_ansible_version: "2.9"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - all
+    - name: Debian
+      versions:
+        - all
+  galaxy_tags:
+    - minikube
+    - kubernetes
+    - kubeconfig
+
+dependencies: []

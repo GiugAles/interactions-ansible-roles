@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT-0
+---
+# handlers file for portainer
+
+- name: Restart portainer
+  community.docker.docker_compose_v2:
+    project_src: "{{ portainer_deploy_dir }}"
+    project_name: "{{ portainer_compose_project_name }}"
+    state: present
+    recreate: always
+  become: true

@@ -1,0 +1,227 @@
+# SPDX-License-Identifier: MIT-0
+---
+# install tasks for aiopslab
+
+- name: Ensure the aiopslab state directory exists
+  become: true
+  ansible.builtin.file:
+    path: "{{ aiopslab_state_dir }}"
+    state: directory
+    owner: "{{ kube_user }}"
+    group: "{{ kube_user }}"
+    mode: "0700"
+
+- name: Build a dedicated kubeconfig for the k3s cluster
+  when: aiopslab_target == 'k3s'
+  block:
+    - name: Read k3s.yaml from the k3s server node
+      become: true
+      ansible.builtin.slurp:
+        src: /etc/rancher/k3s/k3s.yaml
+      delegate_to: "{{ groups['server'][0] }}"
+      register: aiopslab_k3s_yaml
+
+    - name: Write it out with the server address rewritten from 127.0.0.1
+      ansible.builtin.copy:
+        content: >-
+          {{
+            (aiopslab_k3s_yaml.content | b64decode)
+            | regex_replace('https://127\.0\.0\.1:6443',
+                             'https://' ~ hostvars[groups['server'][0]].ansible_host ~ ':6443')
+          }}
+        dest: "{{ aiopslab_kubeconfig }}"
+        owner: "{{ kube_user }}"
+        group: "{{ kube_user }}"
+        mode: "0600"
+
+    - name: Confirm the dedicated kubeconfig actually works
+      ansible.builtin.command: "kubectl --kubeconfig {{ aiopslab_kubeconfig }} get nodes"
+      register: aiopslab_k3s_check
+      changed_when: false
+
+- name: Set up the local kind cluster
+  when: aiopslab_target == 'kind'
+  become: true
+  block:
+    - name: Check whether the kind CLI is already installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/kind
+      register: aiopslab_kind_bin
+
+    - name: Install the kind CLI
+      ansible.builtin.get_url:
+        url: https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-arm64
+        dest: /usr/local/bin/kind
+        mode: "0755"
+      when: not aiopslab_kind_bin.stat.exists
+
+    - name: Copy AIOpsLab's ARM kind cluster config
+      ansible.builtin.copy:
+        src: kind-config-arm.yaml
+        dest: "{{ aiopslab_kind_config }}"
+        owner: "{{ kube_user }}"
+        group: "{{ kube_user }}"
+        mode: "0600"
+
+    - name: List existing kind clusters
+      ansible.builtin.command: kind get clusters
+      register: aiopslab_kind_clusters
+      changed_when: false
+      failed_when: false
+
+    - name: Create the kind cluster
+      ansible.builtin.command: >-
+        kind create cluster --name {{ aiopslab_kind_cluster_name }}
+        --config {{ aiopslab_kind_config }}
+        --kubeconfig {{ aiopslab_kubeconfig }}
+      when: aiopslab_kind_cluster_name not in aiopslab_kind_clusters.stdout_lines
+      changed_when: true
+
+    - name: Let kube_user read the kind-generated kubeconfig
+      ansible.builtin.file:
+        path: "{{ aiopslab_kubeconfig }}"
+        owner: "{{ kube_user }}"
+        group: "{{ kube_user }}"
+        mode: "0600"
+
+- name: Install Chaos Mesh on the k3s cluster with the corrected containerd socket path
+  when: aiopslab_target == 'k3s'
+  block:
+    - name: Check whether an ARM64 Helm binary is already installed
+      ansible.builtin.command: helm version --short
+      register: aiopslab_helm_check
+      changed_when: false
+      failed_when: false
+
+    - name: Install Helm on antillean
+      become: true
+      ansible.builtin.shell: |
+        set -euo pipefail
+        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      args:
+        executable: /bin/bash
+      when: aiopslab_helm_check.rc != 0
+      changed_when: true
+
+    - name: Add the Chaos Mesh Helm repository
+      kubernetes.core.helm_repository:
+        name: chaos-mesh
+        repo_url: https://charts.chaos-mesh.org
+
+    - name: Install the chaos-mesh Helm release
+      kubernetes.core.helm:
+        name: chaos-mesh
+        chart_ref: chaos-mesh/chaos-mesh
+        chart_version: "{{ aiopslab_chaos_mesh_version }}"
+        release_namespace: "{{ aiopslab_chaos_mesh_namespace }}"
+        create_namespace: true
+        kubeconfig: "{{ aiopslab_kubeconfig }}"
+        update_repo_cache: true
+        values:
+          chaosDaemon:
+            runtime: containerd
+            socketPath: "{{ aiopslab_chaos_mesh_containerd_socket }}"
+        wait: true
+
+- name: Copy the controller image build context to antillean
+  ansible.builtin.copy:
+    src: "{{ role_path }}/files/docker/"
+    dest: "{{ aiopslab_build_dir }}/"
+    mode: "0644"
+
+- name: Build the AIOpsLab controller image
+  community.docker.docker_image:
+    name: "{{ aiopslab_image_name }}"
+    source: build
+    # Without this, the module skips building entirely once an image with this tag exists,
+    # which would silently ignore Dockerfile/run_experiment.py edits. Docker's own build
+    # cache still makes an unchanged rebuild fast. Note this doesn't by itself pick up new
+    # upstream commits on a moving ref like the "main" default - `git clone --branch X` is
+    # cache-hit as long as X itself is unchanged; pin aiopslab_version to a tag/SHA and bump
+    # it to force a real refresh.
+    force_source: true
+    build:
+      path: "{{ aiopslab_build_dir }}"
+      args:
+        AIOPSLAB_VERSION: "{{ aiopslab_version }}"
+        AIOPSLAB_REPO_URL: "{{ aiopslab_repo_url }}"
+    state: present
+
+- name: Work out the container's volume mounts
+  ansible.builtin.set_fact:
+    aiopslab_volumes: >-
+      {{
+        [aiopslab_kubeconfig ~ ':/root/.kube/config:ro']
+        + (['/var/run/docker.sock:/var/run/docker.sock'] if aiopslab_target == 'kind' else [])
+        + (['~' ~ kube_user ~ '/.ssh:/root/.ssh:ro'] if aiopslab_mount_ssh_keys else [])
+      }}
+
+- name: Ensure the AIOpsLab controller container is running
+  community.docker.docker_container:
+    name: "{{ aiopslab_container_name }}"
+    image: "{{ aiopslab_image_name }}"
+    state: started
+    restart_policy: unless-stopped
+    # kind's kubeconfig points at 127.0.0.1:<port>; that only resolves to the actual API
+    # server when the container shares antillean's network namespace (a known kind-in-DooD
+    # style gotcha, even though kind create itself now runs directly on the host).
+    network_mode: "{{ 'host' if aiopslab_target == 'kind' else 'default' }}"
+    command: sleep infinity
+    volumes: "{{ aiopslab_volumes }}"
+  register: aiopslab_container
+
+- name: Render the AIOpsLab config.yml
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "{{ aiopslab_state_dir }}/config.yml"
+    owner: "{{ kube_user }}"
+    group: "{{ kube_user }}"
+    mode: "0644"
+  register: aiopslab_config_rendered
+
+- name: Copy config.yml into the container
+  ansible.builtin.command: >-
+    docker cp {{ aiopslab_state_dir }}/config.yml
+    {{ aiopslab_container_name }}:/aiopslab/aiopslab/config.yml
+  when: aiopslab_config_rendered.changed or aiopslab_container.changed
+  changed_when: true
+
+- name: Run the requested AIOpsLab experiment
+  when: aiopslab_problem_id | length > 0
+  block:
+    - name: Ensure the results directory exists
+      become: true
+      ansible.builtin.file:
+        path: "{{ aiopslab_results_dir }}"
+        state: directory
+        owner: "{{ kube_user }}"
+        group: "{{ kube_user }}"
+        mode: "0755"
+
+    - name: Execute the experiment inside the container
+      community.docker.docker_container_exec:
+        container: "{{ aiopslab_container_name }}"
+        command: poetry run python run_experiment.py
+        chdir: /aiopslab
+        env:
+          AIOPSLAB_PROBLEM_ID: "{{ aiopslab_problem_id }}"
+          AIOPSLAB_AGENT: "{{ aiopslab_agent }}"
+          AIOPSLAB_MAX_STEPS: "{{ aiopslab_max_steps | string }}"
+          AIOPSLAB_CLUSTER: "{{ aiopslab_kind_cluster_name if aiopslab_target == 'kind' else '' }}"
+          OPENAI_API_KEY: "{{ aiopslab_llm_api_key }}"
+      register: aiopslab_experiment
+      no_log: true # the env carries the LLM API key
+
+    - name: Show the experiment's exit status
+      ansible.builtin.debug:
+        msg: "AIOpsLab experiment {{ aiopslab_problem_id }} exited with rc={{ aiopslab_experiment.rc }}"
+
+    - name: Fetch the experiment results back onto the host
+      ansible.builtin.command: >-
+        docker cp {{ aiopslab_container_name }}:/aiopslab/aiopslab/data/results/.
+        {{ aiopslab_results_dir }}
+      changed_when: true
+
+    - name: Report where the results landed
+      ansible.builtin.debug:
+        msg: "Results copied to {{ aiopslab_results_dir }} on {{ inventory_hostname }}"

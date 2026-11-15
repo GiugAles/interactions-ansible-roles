@@ -1,0 +1,17 @@
+# Vendored verbatim from microsoft/AIOpsLab's kind/kind-config-arm.yaml (README's documented
+# "kind create cluster --config kind/kind-config-arm.yaml" for ARM machines), so the local
+# kind cluster can be created on antillean without cloning the whole upstream repo onto the
+# host - the AIOpsLab checkout itself lives only inside the controller container.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    image: jacksonarthurclark/aiopslab-kind-arm:latest
+    extraMounts:
+      - hostPath: /run/udev
+        containerPath: /run/udev
+  - role: worker
+    image: jacksonarthurclark/aiopslab-kind-arm:latest
+    extraMounts:
+      - hostPath: /run/udev
+        containerPath: /run/udev

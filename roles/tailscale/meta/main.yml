@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: MIT-0
+galaxy_info:
+  author: Infrastructure Team
+  description: Runs tailscale as a Docker container and joins the host to the tailnet
+  company: Home Infrastructure
+
+  license: MIT-0
+
+  min_ansible_version: "2.9"
+
+  platforms:
+    - name: Debian
+      versions:
+        - bullseye
+        - bookworm
+    - name: Ubuntu
+      versions:
+        - focal
+        - jammy
+
+  galaxy_tags:
+    - docker
+    - tailscale
+    - vpn
+    - wireguard
+    - networking
+
+dependencies:
+  - geerlingguy.docker  # tailscale is deployed as a container
+
+collections:
+  - community.docker  # required for the docker_compose_v2 module

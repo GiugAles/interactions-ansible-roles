@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT-0
+---
+# handlers file for zsh
+
+- name: Notify shell change
+  ansible.builtin.debug:
+    msg: "Shell changed to zsh for user {{ zsh_user }}. Please log out and log back in for the change to take effect."

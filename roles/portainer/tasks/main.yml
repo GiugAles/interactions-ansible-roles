@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: MIT-0
+---
+# tasks file for portainer
+
+- name: Create portainer deployment directory
+  ansible.builtin.file:
+    path: "{{ portainer_deploy_dir }}"
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+  become: true
+
+- name: Copy docker-compose.yml for portainer
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ portainer_deploy_dir }}/docker-compose.yml"
+    mode: '0644'
+    owner: root
+    group: root
+  become: true
+  notify: Restart portainer
+
+- name: Start portainer with docker-compose
+  community.docker.docker_compose_v2:
+    project_src: "{{ portainer_deploy_dir }}"
+    project_name: "{{ portainer_compose_project_name }}"
+    state: present
+  become: true
+
+# Deploy Portainer Agent to Minikube
+- name: Check if minikube is running
+  ansible.builtin.command: minikube status
+  register: portainer_minikube_status
+  failed_when: false
+  changed_when: false
+  become: false
+  become_user: "{{ ansible_user }}"
+  when: portainer_deploy_to_minikube
+
+- name: Deploy portainer agent to minikube using official manifest
+  ansible.builtin.command: kubectl apply -f https://downloads.portainer.io/ce2-33/portainer-agent-k8s-nodeport.yaml
+  register: portainer_agent_apply
+  # kubectl apply reports each object as created, configured or unchanged
+  changed_when: portainer_agent_apply.stdout is search(' (created|configured)$', multiline=True)
+  become: false
+  become_user: "{{ ansible_user }}"
+  when: portainer_deploy_to_minikube and portainer_minikube_status.rc == 0

@@ -1,0 +1,19 @@
+---
+# defaults file for minikube_shared
+
+# The single account that runs the cluster. Everybody else shares it by logging
+# into that account, so this role never touches another account's files.
+minikube_shared_owner: ""
+
+# Driver `minikube start` is called with.
+minikube_shared_driver: docker
+
+# Further flags for `minikube start`, e.g. ["--cpus=max", "--memory=max"] on a
+# host that runs nothing else. minikube applies most of them only when it
+# creates the cluster: an existing cluster keeps its size until `minikube delete`.
+minikube_shared_start_args: []
+
+# Whether to sudo to `minikube_shared_owner`. Set it to false when the
+# connection already is that account -- the on-host `sync_minikube` run ssh's
+# into the owner, so it needs no sudo rights at all.
+minikube_shared_become: true
