@@ -1,0 +1,29 @@
+---
+- name: Check the requested state
+  ansible.builtin.assert:
+    that: krkn_state in ['present', 'absent']
+    fail_msg: >-
+      krkn_state is '{{ krkn_state_input }}', but only present (install) and absent (uninstall) are supported.
+      Set it with the environment variable KRKN_STATE or with -e krkn_state=...
+    success_msg: "krkn will be {{ 'installed' if krkn_state == 'present' else 'removed' }}"
+
+- name: Check that the console has a hostname
+  ansible.builtin.assert:
+    that: krkn_console_hostname | length > 0
+    fail_msg: krkn_console_ingress_enabled needs krkn_console_hostname
+    quiet: true
+  when:
+    - krkn_state == 'present'
+    - krkn_console_enabled | bool
+    - krkn_console_ingress_enabled | bool
+
+- name: Check that helm is installed
+  ansible.builtin.command:
+    cmd: helm version --short
+  changed_when: false
+
+- name: Check that kubectl reaches the cluster
+  ansible.builtin.command:
+    cmd: kubectl version --output=json
+  environment: "{{ krkn_kube_env }}"
+  changed_when: false

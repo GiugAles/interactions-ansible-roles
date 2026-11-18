@@ -1,0 +1,60 @@
+---
+# Whether krkn is installed (present) or removed again (absent).
+# Read from the environment variable KRKN_STATE, which also accepts install/uninstall as aliases:
+#   KRKN_STATE=uninstall ansible-playbook <playbook> -i <inventory>
+# It can also be set on the command line, which wins over the environment: -e krkn_state=absent
+krkn_state_input: "{{ lookup('ansible.builtin.env', 'KRKN_STATE') | default('present', true) | lower }}"
+krkn_state: "{{ krkn_state_aliases.get(krkn_state_input, krkn_state_input) }}"
+
+# Helm release of the krkn operator, see https://krkn-chaos.dev/docs/krkn-operator/installation/
+krkn_release_name: krkn-operator
+krkn_namespace: krkn-operator-system
+krkn_chart_ref: oci://quay.io/krkn-chaos/charts/krkn-operator
+krkn_chart_version: "1.0.0"
+krkn_wait_timeout: 10m
+
+# Path of the kubeconfig on the target host; empty uses the default of helm and kubectl,
+# i.e. $KUBECONFIG or ~/.kube/config
+krkn_kubeconfig: ""
+
+# Web console of the operator. Without an ingress it is reachable with
+# `kubectl -n krkn-operator-system port-forward svc/krkn-operator-console 3000:3000`.
+krkn_console_enabled: true
+
+# Publish the console as https://{{ krkn_console_hostname }}, which then has to be set. The console administers the
+# chaos scenarios of the cluster and its first visitor creates the admin user, so create it right after the first
+# installation, or leave the ingress off and use the port-forward above.
+krkn_console_ingress_enabled: false
+krkn_console_hostname: ""
+# IngressClass of the console; empty uses the default of the cluster
+krkn_console_ingress_class_name: ""
+# Request a certificate from this cert-manager ClusterIssuer, which has to exist
+krkn_console_tls_enabled: true
+krkn_console_tls_cluster_issuer: letsencrypt
+
+# Additional Helm values, merged into the ones of this role, e.g.
+#   -e '{"krkn_extra_values": {"operator": {"logging": {"level": "debug"}}}}'
+krkn_extra_values: {}
+
+# Clusters that krkn attacks, registered as targets of the operator by tasks/targets.yml. Each entry has the name
+# that the console shows and a kubeconfig (as string) whose server the pods of the operator reach, e.g.
+#   krkn_targets:
+#     - name: app
+#       kubeconfig: "{{ lookup('ansible.builtin.file', 'app.kubeconfig') }}"
+# The vcluster role writes such a kubeconfig to vcluster_kubeconfig (see its README).
+krkn_targets: []
+
+# Uninstall: remove everything, not only the Helm release. Helm never deletes the CRDs of the crds/ directory of a
+# chart, and the namespace is not part of the release either, so this role removes both.
+krkn_remove_crds: true
+krkn_remove_namespace: true
+
+# Command line client krknctl (https://krkn-chaos.dev/docs/installation/krknctl/), installed on the target host next
+# to the operator and removed again on uninstall. It runs the scenarios of krkn-hub as containers and therefore needs
+# podman or docker on the target host.
+krkn_krknctl_enabled: true
+# Release of https://github.com/krkn-chaos/krknctl/releases; another version replaces the installed binary
+krkn_krknctl_version: v0.14.2-beta
+# Directory of the binary. The default in the home directory of the SSH user needs no sudo; Ubuntu adds it to the
+# PATH of login shells once it exists.
+krkn_krknctl_install_dir: "~/.local/bin"

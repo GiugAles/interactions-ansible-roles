@@ -1,0 +1,9 @@
+---
+- name: Check the requirements of the vcluster
+  ansible.builtin.import_tasks: preflight.yml
+
+- name: Install the vcluster CLI
+  ansible.builtin.import_tasks: cli.yml
+
+- name: Create the vcluster
+  ansible.builtin.import_tasks: install.yml

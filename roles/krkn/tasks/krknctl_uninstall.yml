@@ -1,0 +1,5 @@
+---
+- name: Remove krknctl
+  ansible.builtin.file:
+    path: "{{ krkn_krknctl_path }}"
+    state: absent

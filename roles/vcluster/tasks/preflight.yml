@@ -1,0 +1,43 @@
+---
+- name: Check that helm is installed
+  ansible.builtin.command:
+    cmd: helm version --short
+  changed_when: false
+
+- name: Read the current context of kubectl
+  ansible.builtin.command:
+    cmd: kubectl config current-context
+  environment: "{{ vcluster_kube_env }}"
+  register: vcluster_current_context
+  changed_when: false
+
+# `vcluster connect` switches the current context of kubectl to a vcluster and leaves it there. The vcluster and krkn
+# belong into the host cluster, not into another vcluster.
+- name: Check that kubectl points to the host cluster
+  ansible.builtin.assert:
+    that: not vcluster_current_context.stdout.startswith('vcluster_')
+    fail_msg: >-
+      The current context of kubectl is {{ vcluster_current_context.stdout }}, a vcluster. Switch back to the host
+      cluster with `vcluster disconnect`, or pass a kubeconfig of the host cluster with -e k8s_kubeconfig=<file>
+    quiet: true
+
+- name: Look up the address of the first node of the host cluster
+  ansible.builtin.command:
+    cmd: >-
+      kubectl get nodes
+      '--output=jsonpath={.items[0].status.addresses[?(@.type=="InternalIP")].address}'
+  environment: "{{ vcluster_kube_env }}"
+  register: vcluster_node_internal_ip
+  changed_when: false
+  when: vcluster_node_address | length == 0
+
+- name: Remember the address under which the target host reaches the node port of the vcluster
+  ansible.builtin.set_fact:
+    vcluster_api_address: >-
+      {{ vcluster_node_address if vcluster_node_address | length > 0 else vcluster_node_internal_ip.stdout }}
+
+- name: Check the address of the node port
+  ansible.builtin.assert:
+    that: vcluster_api_address | length > 0
+    fail_msg: "The nodes of the host cluster have no InternalIP, set one with -e vcluster_node_address=<address>"
+    quiet: true

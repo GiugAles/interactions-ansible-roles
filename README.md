@@ -9,11 +9,13 @@ version that every repository pins.
 | Role | What it does |
 | --- | --- |
 | `aiopslab` | Runs AIOpsLab experiments against a k3s or kind cluster from a Docker container |
+| `krkn` | The krkn chaos engineering operator, its console and `krknctl`, with the clusters it attacks |
 | `minikube_shared` | Keeps one minikube cluster of one account up and its kubeconfig current |
 | `portainer` | Portainer CE in Docker Compose, optionally connected to Kubernetes |
 | `syncthing` | Syncthing in a Docker container |
 | `tailscale` | Tailscale in a Docker container that joins the host to the tailnet |
 | `users` | Local accounts with SSH keys and a shared supplementary group |
+| `vcluster` | A vcluster in a namespace of a host cluster, e.g. as a target of `krkn` |
 | `zsh` | zsh with oh-my-zsh, plugins and oh-my-posh for one account |
 
 Each role's README lists its variables.
@@ -64,6 +66,10 @@ Run `ansible-lint` in the root before every commit. A release is a tag `vX.Y.Z` 
 
 The roles were collected on 2026-11-15 from the home infrastructure repository: `aiopslab` from the branch
 `feature/aiopslab-role`, all others from `feat/asse`, which holds their newest versions.
+
+The roles `krkn` and `vcluster` were moved on 2026-11-18 from `deploy/ansible/roles/` of
+`Interactions-HSG/pitas-hs25-group10`, where PITAS ran in a vcluster that krkn attacked. Their PITAS-specific defaults
+became generic: the vcluster is called `vcluster`, and the krkn console has no Ingress unless a hostname is set.
 
 ## License
 

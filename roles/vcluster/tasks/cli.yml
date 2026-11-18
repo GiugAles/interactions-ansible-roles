@@ -1,0 +1,62 @@
+---
+# The role creates the vcluster with Helm and does not need the CLI, but people working with the vcluster do, e.g.
+# for `vcluster list` or `vcluster connect`. It is a single binary, taken from the GitHub release, so that the version
+# is pinned and the download is checked against the checksums of the release.
+- name: Read the version of an installed vcluster CLI
+  ansible.builtin.shell:
+    cmd: "{{ vcluster_cli_path }} --version 2>/dev/null || vcluster --version"
+  register: vcluster_cli_installed_version
+  changed_when: false
+  failed_when: false
+
+# Only a missing CLI or another version is downloaded, a CLI of the version of the chart on the PATH is kept
+- name: Install the vcluster CLI {{ vcluster_version }}
+  when: vcluster_cli_installed_version.stdout | default('') != 'vcluster version ' ~ vcluster_version
+  block:
+    - name: Read the architecture of the target host
+      ansible.builtin.command:
+        cmd: uname -m
+      register: vcluster_cli_uname
+      changed_when: false
+
+    - name: Check that the vcluster CLI is released for the architecture
+      ansible.builtin.assert:
+        that: vcluster_cli_uname.stdout in vcluster_cli_arch_names
+        fail_msg: "The vcluster CLI has no Linux release for the architecture {{ vcluster_cli_uname.stdout }}"
+        quiet: true
+
+    - name: Read the checksums of the vcluster release
+      ansible.builtin.uri:
+        url: "{{ vcluster_cli_release_url }}/checksums.txt"
+        return_content: true
+      register: vcluster_cli_checksums
+
+    - name: Check that the release has a checksum for the vcluster CLI
+      ansible.builtin.assert:
+        that: vcluster_cli_checksum | length == 64
+        fail_msg: "{{ vcluster_cli_asset }} is missing in the checksums.txt of vcluster {{ vcluster_version }}"
+        quiet: true
+
+    - name: Create the directory of the vcluster CLI
+      ansible.builtin.file:
+        path: "{{ vcluster_cli_install_dir }}"
+        state: directory
+        mode: "0755"
+
+    # get_url checks the checksum before it replaces the binary
+    - name: Download the vcluster CLI
+      ansible.builtin.get_url:
+        url: "{{ vcluster_cli_release_url }}/{{ vcluster_cli_asset }}"
+        checksum: "sha256:{{ vcluster_cli_checksum }}"
+        dest: "{{ vcluster_cli_path }}"
+        mode: "0755"
+
+    - name: Read the version of the downloaded vcluster CLI
+      ansible.builtin.command:
+        cmd: "{{ vcluster_cli_path }} --version"
+      register: vcluster_cli_downloaded_version
+      changed_when: false
+
+- name: Show the version of the vcluster CLI
+  ansible.builtin.debug:
+    msg: "{{ vcluster_cli_downloaded_version.stdout | default(vcluster_cli_installed_version.stdout) }}"

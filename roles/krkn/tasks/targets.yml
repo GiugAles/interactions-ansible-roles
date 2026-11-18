@@ -1,0 +1,66 @@
+---
+# Registers the clusters of krkn_targets like the page "Cluster Management" of the console does
+# (internal/api/targets_crud.go of krkn-operator): a KrknOperatorTarget and a secret with the kubeconfig. Creating
+# both with kubectl needs no login to the console.
+- name: List the targets of krkn
+  ansible.builtin.command:
+    cmd: kubectl --namespace {{ krkn_namespace }} get krknoperatortargets --output json
+  environment: "{{ krkn_kube_env }}"
+  register: krkn_existing_targets
+  changed_when: false
+
+# The operator identifies the clusters of the scenario runs by name, and the console refuses a second target with the
+# name or the API server of an existing one
+- name: Check that no other target has the name or the API server of a target
+  ansible.builtin.assert:
+    that: krkn_conflicting_targets | length == 0
+    fail_msg: >-
+      The target {{ item.name }} ({{ krkn_target_api_url }}) is already registered as
+      {{ krkn_conflicting_targets | map(attribute='spec.clusterName') | join(', ') }}, e.g. in the console. Delete it
+      on the page "Cluster Management" of the console and run the playbook again.
+    quiet: true
+  loop: "{{ krkn_targets }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Register the targets of krkn
+  ansible.builtin.command:
+    cmd: kubectl apply --filename -
+    stdin: "{{ krkn_target_manifest | to_nice_yaml }}"
+  environment: "{{ krkn_kube_env }}"
+  loop: "{{ krkn_targets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: krkn_target_apply
+  changed_when: krkn_target_apply.stdout_lines | reject('search', ' unchanged$') | list | length > 0
+  # The manifest contains the kubeconfig
+  no_log: true
+
+# The operator only hands targets that are ready to the scenario runs. The status is not part of what kubectl apply
+# writes, so it is set like the console does, once.
+- name: Mark the targets of krkn as ready
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - --namespace
+      - "{{ krkn_namespace }}"
+      - patch
+      - krknoperatortarget
+      - "{{ krkn_target_uuid }}"
+      - --subresource=status
+      - --type=merge
+      - --patch
+      - "{{ {'status': {'ready': true, 'lastUpdated': now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ')}} | to_json }}"
+  environment: "{{ krkn_kube_env }}"
+  loop: "{{ krkn_targets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: true
+  when: not krkn_target_ready | bool
+
+- name: Show the targets of krkn
+  ansible.builtin.debug:
+    msg: "krkn attacks the cluster {{ item.name }} at {{ krkn_target_api_url }}"
+  loop: "{{ krkn_targets }}"
+  loop_control:
+    label: "{{ item.name }}"
