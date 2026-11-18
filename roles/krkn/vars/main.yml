@@ -1,0 +1,146 @@
+---
+# Internal variables of the role, not meant to be overridden.
+
+# Accepted spellings of KRKN_STATE next to the canonical present/absent
+krkn_state_aliases:
+  install: present
+  installed: present
+  deploy: present
+  uninstall: absent
+  uninstalled: absent
+  remove: absent
+  removed: absent
+  delete: absent
+
+# API group of all CRDs of the operator, used to find them again on uninstall
+krkn_crd_group: krkn.krkn-chaos.dev
+
+# Secret in which the chart stores the key that signs the tokens of the console. When auth.jwtSecret is not set, the
+# chart generates a new random key on *every* `helm upgrade`, which would make this role report a change on every run
+# and log everybody out of the console. tasks/install.yml therefore reads the key of an existing installation back
+# and passes it in again.
+krkn_jwt_secret_name: krkn-operator-jwt-secret
+
+# Namespaces that the uninstall must never delete
+krkn_protected_namespaces:
+  - default
+  - kube-system
+  - kube-public
+  - kube-node-lease
+
+# KUBECONFIG for the kubectl calls; empty krkn_kubeconfig leaves the environment of the target host alone
+krkn_kube_env: "{{ {'KUBECONFIG': krkn_kubeconfig} if krkn_kubeconfig | length > 0 else {} }}"
+
+# How to reach the console after the installation
+krkn_console_port_forward: >-
+  kubectl --namespace {{ krkn_namespace }} port-forward svc/{{ krkn_release_name }}-console 3000:3000,
+  then open http://localhost:3000
+krkn_console_hint: >-
+  {{ 'Console: disabled by krkn_console_enabled' if not krkn_console_enabled | bool
+     else 'Console: https://' ~ krkn_console_hostname if krkn_console_ingress_enabled | bool
+     else 'Console: ' ~ krkn_console_port_forward }}
+
+# The release that `helm list` found, and whether it already is the one that this role would install. Only when it
+# is not, tasks/install.yml runs `helm upgrade`, which is what keeps repeated runs idempotent.
+krkn_deployed_release: "{{ krkn_release_list.stdout | default('[]') | from_json | first | default({}) }}"
+krkn_deployed_values_current: "{{ krkn_deployed_values.stdout | default('null') | from_json or {} }}"
+krkn_release_is_current: >-
+  {{ krkn_deployed_release.chart | default('') == krkn_release_name ~ '-' ~ krkn_chart_version
+     and krkn_deployed_release.status | default('') == 'deployed'
+     and krkn_deployed_values_current == krkn_release_values }}
+
+# Values passed to the chart. The keys follow
+# https://github.com/krkn-chaos/krkn-operator/blob/main/charts/krkn-operator/values.yaml
+krkn_release_values: "{{ krkn_chart_values | combine(krkn_extra_values, recursive=true) }}"
+
+krkn_chart_values:
+  auth:
+    jwtSecret: "{{ krkn_jwt_secret }}"
+  console: "{{ krkn_console_values }}"
+
+krkn_console_values:
+  enabled: "{{ krkn_console_enabled | bool }}"
+  ingress: "{{ krkn_console_ingress_values if krkn_console_ingress_enabled | bool else {'enabled': false} }}"
+
+# The ingress template of the chart expects the hosts/tls lists of a standard Helm ingress, not the single hostname
+# that its values.yaml documents.
+krkn_console_ingress_values:
+  enabled: true
+  className: "{{ krkn_console_ingress_class_name }}"
+  annotations: "{{ {'cert-manager.io/cluster-issuer': krkn_console_tls_cluster_issuer} if krkn_console_tls_enabled | bool else {} }}"
+  hosts:
+    - host: "{{ krkn_console_hostname }}"
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: "{{ [{'hosts': [krkn_console_hostname], 'secretName': krkn_release_name ~ '-console-tls'}] if krkn_console_tls_enabled | bool else [] }}"
+
+# The target `item` of krkn_targets in tasks/targets.yml. Its UUIDs are derived from its name, so that repeated runs
+# update the same KrknOperatorTarget and secret instead of adding new ones.
+krkn_target_uuid: "{{ ('krkn-target/' ~ item.name) | to_uuid }}"
+krkn_target_secret_uuid: "{{ ('krkn-target-secret/' ~ item.name) | to_uuid }}"
+krkn_target_kubeconfig: "{{ item.kubeconfig | from_yaml }}"
+krkn_target_context: >-
+  {{ krkn_target_kubeconfig.contexts
+     | selectattr('name', 'equalto', krkn_target_kubeconfig['current-context']) | first }}
+krkn_target_api_url: >-
+  {{ (krkn_target_kubeconfig.clusters
+      | selectattr('name', 'equalto', krkn_target_context.context.cluster) | first).cluster.server }}
+krkn_known_targets: "{{ (krkn_existing_targets.stdout | from_json)['items'] }}"
+krkn_other_targets: "{{ krkn_known_targets | rejectattr('metadata.name', 'equalto', krkn_target_uuid) | list }}"
+krkn_conflicting_targets: >-
+  {{ (krkn_other_targets | selectattr('spec.clusterName', 'equalto', item.name) | list)
+     + (krkn_other_targets | selectattr('spec.clusterAPIURL', 'defined')
+        | selectattr('spec.clusterAPIURL', 'equalto', krkn_target_api_url) | list) }}
+krkn_target_ready: >-
+  {{ krkn_known_targets | selectattr('metadata.name', 'equalto', krkn_target_uuid)
+     | map(attribute='status.ready', default=false) | first | default(false) }}
+
+# The secret holds the kubeconfig like the operator stores it: base64 encoded inside a JSON object
+krkn_target_manifest:
+  apiVersion: v1
+  kind: List
+  items:
+    - apiVersion: v1
+      kind: Secret
+      type: Opaque
+      metadata:
+        name: "{{ krkn_target_secret_uuid }}"
+        namespace: "{{ krkn_namespace }}"
+        labels:
+          krkn-target-uuid: "{{ krkn_target_uuid }}"
+      data:
+        kubeconfig: "{{ {'kubeconfig': item.kubeconfig | b64encode} | to_json | b64encode }}"
+    - apiVersion: "{{ krkn_crd_group }}/v1alpha1"
+      kind: KrknOperatorTarget
+      metadata:
+        name: "{{ krkn_target_uuid }}"
+        namespace: "{{ krkn_namespace }}"
+      spec:
+        uuid: "{{ krkn_target_uuid }}"
+        clusterName: "{{ item.name }}"
+        clusterAPIURL: "{{ krkn_target_api_url }}"
+        secretType: kubeconfig
+        secretUUID: "{{ krkn_target_secret_uuid }}"
+
+# The releases of krknctl name the architectures like Go, `uname -m` like the kernel
+krkn_krknctl_arch_names:
+  x86_64: amd64
+  aarch64: arm64
+krkn_krknctl_release_url: "https://github.com/krkn-chaos/krknctl/releases/download/{{ krkn_krknctl_version }}"
+krkn_krknctl_arch: "{{ krkn_krknctl_arch_names[krkn_krknctl_uname.stdout] }}"
+krkn_krknctl_tarball: "krknctl-{{ krkn_krknctl_version }}-linux-{{ krkn_krknctl_arch }}.tar.gz"
+krkn_krknctl_path: "{{ krkn_krknctl_install_dir }}/krknctl"
+
+# The checksums.txt of a release lists the tarballs with their directory, e.g. linux-amd64/<tarball>, which the
+# checksum URL of get_url does not match, so the digest is looked up by the name of the tarball
+krkn_krknctl_checksum: >-
+  {{ krkn_krknctl_checksums.content.splitlines() | map('split')
+     | selectattr(1, 'search', '(^|/)' ~ (krkn_krknctl_tarball | regex_escape) ~ '$')
+     | map('first') | first | default('') }}
+
+# krknctl installs without a container runtime, but cannot run any scenario without one
+krkn_krknctl_runtime_hint: >-
+  {{ 'krknctl runs its scenarios as containers with ' ~ krkn_krknctl_runtime.stdout | basename
+     if krkn_krknctl_runtime.rc == 0
+     else 'krknctl needs podman or docker to run its scenarios, but neither is installed on ' ~ inventory_hostname }}

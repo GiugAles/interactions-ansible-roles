@@ -1,0 +1,86 @@
+---
+# krknctl is the command line client of krkn: it runs the scenarios of krkn-hub as containers with podman or docker.
+# It is a single binary, taken from the GitHub release instead of the install script of the krkn documentation, so
+# that the version is pinned and the download is checked against the checksums of the release.
+- name: Read the version of an installed krknctl
+  ansible.builtin.command:
+    cmd: "{{ krkn_krknctl_path }} --version"
+  register: krkn_krknctl_installed_version
+  changed_when: false
+  failed_when: false
+
+# Only a missing binary or another version is downloaded, which keeps repeated runs idempotent
+- name: Install krknctl {{ krkn_krknctl_version }}
+  when: krkn_krknctl_installed_version.stdout | default('') != 'krknctl version ' ~ krkn_krknctl_version
+  block:
+    - name: Read the architecture of the target host
+      ansible.builtin.command:
+        cmd: uname -m
+      register: krkn_krknctl_uname
+      changed_when: false
+
+    - name: Check that krknctl is released for the architecture
+      ansible.builtin.assert:
+        that: krkn_krknctl_uname.stdout in krkn_krknctl_arch_names
+        fail_msg: "krknctl has no Linux release for the architecture {{ krkn_krknctl_uname.stdout }}"
+        quiet: true
+
+    - name: Read the checksums of the krknctl release
+      ansible.builtin.uri:
+        url: "{{ krkn_krknctl_release_url }}/checksums.txt"
+        return_content: true
+      register: krkn_krknctl_checksums
+
+    - name: Check that the release has a checksum for krknctl
+      ansible.builtin.assert:
+        that: krkn_krknctl_checksum | length == 64
+        fail_msg: "{{ krkn_krknctl_tarball }} is missing in the checksums.txt of krknctl {{ krkn_krknctl_version }}"
+        quiet: true
+
+    - name: Create a temporary directory for the download
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: krknctl.
+      register: krkn_krknctl_download_dir
+
+    - name: Download krknctl
+      ansible.builtin.get_url:
+        url: "{{ krkn_krknctl_release_url }}/{{ krkn_krknctl_tarball }}"
+        checksum: "sha256:{{ krkn_krknctl_checksum }}"
+        dest: "{{ krkn_krknctl_download_dir.path }}/{{ krkn_krknctl_tarball }}"
+        mode: "0600"
+
+    - name: Create the directory of the binary
+      ansible.builtin.file:
+        path: "{{ krkn_krknctl_install_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Unpack krknctl
+      ansible.builtin.unarchive:
+        src: "{{ krkn_krknctl_download_dir.path }}/{{ krkn_krknctl_tarball }}"
+        dest: "{{ krkn_krknctl_install_dir }}"
+        remote_src: true
+        include:
+          - krknctl
+        mode: "0755"
+
+  always:
+    - name: Remove the download
+      ansible.builtin.file:
+        path: "{{ krkn_krknctl_download_dir.path }}"
+        state: absent
+      when: krkn_krknctl_download_dir.path is defined
+
+- name: Look for the container runtime of krknctl
+  ansible.builtin.shell:
+    cmd: command -v podman || command -v docker
+  register: krkn_krknctl_runtime
+  changed_when: false
+  failed_when: false
+
+- name: Show how to use krknctl
+  ansible.builtin.debug:
+    msg:
+      - "krknctl {{ krkn_krknctl_version }} is installed as {{ krkn_krknctl_path }}"
+      - "{{ krkn_krknctl_runtime_hint }}"

@@ -1,0 +1,23 @@
+---
+- name: Check the requirements and the requested state
+  ansible.builtin.import_tasks: preflight.yml
+
+- name: Install krkn
+  ansible.builtin.import_tasks: install.yml
+  when: krkn_state == 'present'
+
+- name: Install krknctl
+  ansible.builtin.import_tasks: krknctl_install.yml
+  when:
+    - krkn_state == 'present'
+    - krkn_krknctl_enabled | bool
+
+- name: Uninstall krkn
+  ansible.builtin.import_tasks: uninstall.yml
+  when: krkn_state == 'absent'
+
+- name: Uninstall krknctl
+  ansible.builtin.import_tasks: krknctl_uninstall.yml
+  when:
+    - krkn_state == 'absent'
+    - krkn_krknctl_enabled | bool

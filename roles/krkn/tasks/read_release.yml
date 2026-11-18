@@ -1,0 +1,11 @@
+---
+# `helm list` prints an empty array when the release or its namespace does not exist, so both the installation and
+# the removal can ask for the release without having to treat a missing one as an error.
+- name: Look for the Helm release of krkn
+  ansible.builtin.command:
+    cmd: >-
+      helm list --namespace {{ krkn_namespace }}
+      --filter ^{{ krkn_release_name }}$ --output json
+  environment: "{{ krkn_kube_env }}"
+  register: krkn_release_list
+  changed_when: false

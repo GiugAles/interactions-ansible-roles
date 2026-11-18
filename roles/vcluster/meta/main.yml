@@ -1,0 +1,17 @@
+---
+galaxy_info:
+  author: Alessandro Giugno
+  description: Create a vcluster in a namespace of a host cluster, with a kubeconfig for the host
+  company: ""
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - all
+  galaxy_tags:
+    - kubernetes
+    - vcluster
+    - helm
+
+dependencies: []

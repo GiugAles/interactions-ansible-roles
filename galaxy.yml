@@ -2,7 +2,7 @@
 # Installed from git, never published to Galaxy (see README.md)
 namespace: interactions
 name: roles
-version: 0.1.0
+version: 0.2.0
 readme: README.md
 authors:
   - Alessandro Giugno
@@ -14,6 +14,7 @@ tags:
   - docker
   - kubernetes
   - minikube
+  - chaos
 dependencies:
   ansible.posix: ">=1.5.0"
   community.docker: ">=3.10.0"

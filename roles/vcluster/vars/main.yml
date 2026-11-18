@@ -1,0 +1,56 @@
+---
+# Internal variables of the role, not meant to be overridden.
+
+# KUBECONFIG for the helm and kubectl calls; empty vcluster_host_kubeconfig leaves the environment of the target host
+# alone
+vcluster_kube_env: "{{ {'KUBECONFIG': vcluster_host_kubeconfig} if vcluster_host_kubeconfig | length > 0 else {} }}"
+
+# The API of the vcluster: its service for the pods of the host cluster, e.g. the scenarios of krkn, and its node port
+# for the target host (vcluster_api_address is looked up by tasks/preflight.yml)
+vcluster_service_host: "{{ vcluster_name }}.{{ vcluster_namespace }}.svc"
+vcluster_service_server: "https://{{ vcluster_service_host }}:443"
+vcluster_node_server: "https://{{ vcluster_api_address }}:{{ vcluster_api_node_port }}"
+
+# Values passed to the chart, see https://www.vcluster.com/docs/vcluster/configure/vcluster-yaml/
+vcluster_release_values: "{{ vcluster_chart_values | combine(vcluster_extra_values, recursive=true) }}"
+
+vcluster_chart_values:
+  controlPlane:
+    proxy:
+      # The certificate of the API only names localhost and the vcluster itself by default, not the addresses under
+      # which the host cluster and the target host reach it
+      extraSANs:
+        - "{{ vcluster_service_host }}"
+        - "{{ vcluster_service_host }}.cluster.local"
+        - "{{ vcluster_api_address }}"
+    service:
+      spec:
+        type: NodePort
+      httpsNodePort: "{{ vcluster_api_node_port | int }}"
+  # The kubeconfig in the secret vc-<name> points to the service, so that krkn can use it as it is
+  exportKubeConfig:
+    context: "vcluster-{{ vcluster_name }}"
+    server: "{{ vcluster_service_server }}"
+  sync:
+    toHost:
+      # Copy the Ingresses to the host cluster, whose ingress controller and cert-manager then serve them
+      ingresses:
+        enabled: true
+
+# The kubeconfig of the secret vc-<name> (tasks/install.yml), and the same with the node port as server for the
+# target host
+vcluster_kubeconfig_data: "{{ vcluster_kubeconfig | from_yaml }}"
+vcluster_node_kubeconfig: >-
+  {{ vcluster_kubeconfig_data | combine({'clusters': vcluster_kubeconfig_data.clusters
+     | map('combine', {'cluster': {'server': vcluster_node_server}}, recursive=true) | list}) }}
+
+# The releases of the vcluster CLI name the architectures like Go, `uname -m` like the kernel
+vcluster_cli_arch_names:
+  x86_64: amd64
+  aarch64: arm64
+vcluster_cli_release_url: "https://github.com/loft-sh/vcluster/releases/download/v{{ vcluster_version }}"
+vcluster_cli_asset: "vcluster-linux-{{ vcluster_cli_arch_names[vcluster_cli_uname.stdout] }}"
+vcluster_cli_path: "{{ vcluster_cli_install_dir }}/vcluster"
+vcluster_cli_checksum: >-
+  {{ vcluster_cli_checksums.content.splitlines() | map('split')
+     | selectattr(1, 'equalto', vcluster_cli_asset) | map('first') | first | default('') }}

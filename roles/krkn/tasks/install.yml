@@ -1,0 +1,71 @@
+---
+- name: Check the configuration of the console ingress
+  ansible.builtin.assert:
+    that: krkn_console_hostname | length > 0
+    fail_msg: "krkn_console_ingress_enabled needs a krkn_console_hostname, e.g. -e krkn_console_hostname=krkn.<domain>"
+    quiet: true
+  when:
+    - krkn_console_enabled | bool
+    - krkn_console_ingress_enabled | bool
+
+# Keeping the key that signs the console tokens is what makes repeated runs idempotent, see krkn_jwt_secret_name
+# in vars/main.yml. It is stored base64 encoded in the secret and expected base64 encoded in auth.jwtSecret, so it
+# can be passed back unchanged.
+- name: Read the JWT signing key of an existing installation
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --namespace {{ krkn_namespace }}
+      get secret {{ krkn_jwt_secret_name }} --output jsonpath={.data.jwt-secret}
+  environment: "{{ krkn_kube_env }}"
+  register: krkn_jwt_secret_read
+  changed_when: false
+  failed_when:
+    - krkn_jwt_secret_read.rc != 0
+    - '"NotFound" not in krkn_jwt_secret_read.stderr'
+  no_log: true
+
+- name: Keep the JWT signing key of the existing installation
+  ansible.builtin.set_fact:
+    krkn_jwt_secret: "{{ krkn_jwt_secret_read.stdout }}"
+  when: krkn_jwt_secret_read.stdout | length > 0
+  no_log: true
+
+- name: Generate a JWT signing key for the first installation
+  ansible.builtin.set_fact:
+    krkn_jwt_secret: "{{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['ascii_letters', 'digits']) | b64encode }}"
+  when: krkn_jwt_secret_read.stdout | length == 0
+  no_log: true
+
+# The two reads below are what makes the installation idempotent: krkn is only installed again when its release is
+# missing, is not `deployed`, has another chart version or was installed with other values.
+- name: Read the Helm release of krkn
+  ansible.builtin.import_tasks: read_release.yml
+
+- name: Read the values of the Helm release of krkn
+  ansible.builtin.command:
+    cmd: >-
+      helm get values {{ krkn_release_name }}
+      --namespace {{ krkn_namespace }} --output json
+  environment: "{{ krkn_kube_env }}"
+  register: krkn_deployed_values
+  changed_when: false
+  when: krkn_deployed_release | length > 0
+
+- name: Install or upgrade the krkn operator
+  ansible.builtin.command:
+    cmd: >-
+      helm upgrade --install {{ krkn_release_name }} {{ krkn_chart_ref }}
+      --version {{ krkn_chart_version }}
+      --namespace {{ krkn_namespace }} --create-namespace
+      --values - --atomic --timeout {{ krkn_wait_timeout }}
+    stdin: "{{ krkn_release_values | to_nice_yaml }}"
+  environment: "{{ krkn_kube_env }}"
+  register: krkn_helm_upgrade
+  changed_when: krkn_helm_upgrade.rc == 0
+  when: not krkn_release_is_current | bool
+
+- name: Show how to reach the krkn console
+  ansible.builtin.debug:
+    msg:
+      - "krkn {{ krkn_chart_version }} is installed in the namespace {{ krkn_namespace }}"
+      - "{{ krkn_console_hint }}"

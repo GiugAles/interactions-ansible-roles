@@ -1,0 +1,37 @@
+---
+# vcluster (https://www.vcluster.com), e.g. for an application that krkn attacks: the krkn operator never runs
+# scenarios against the cluster it is installed in. The vcluster runs in a namespace of the host cluster, its API is
+# reachable from the pods of the host cluster as https://<vcluster_name>.<vcluster_namespace>.svc, and the host
+# cluster serves its Ingresses with its own ingress controller.
+
+# Name of the vcluster and namespace of the host cluster in which it runs
+vcluster_name: vcluster
+vcluster_namespace: "vcluster-{{ vcluster_name }}"
+
+# Version of the vcluster Helm chart and of the vcluster CLI; another version upgrades both
+vcluster_version: "0.34.0"
+vcluster_chart_repo_url: https://charts.loft.sh
+vcluster_wait_timeout: 10m
+
+# Path of the kubeconfig of the host cluster on the target host; empty uses the default of helm and kubectl,
+# i.e. $KUBECONFIG or ~/.kube/config
+vcluster_host_kubeconfig: ""
+
+# Node port of the API of the vcluster. helm and kubectl on the target host reach the vcluster through it, e.g. in the
+# a deploy workflow; on minikube, the nodes are only reachable from the VM itself.
+vcluster_api_node_port: 32443
+# Address of a node under which the target host reaches the node port; empty uses the InternalIP of the first node
+vcluster_node_address: ""
+
+# Where the kubeconfig of the vcluster is written on the target host, for helm and kubectl, e.g.
+#   helm --kubeconfig ~/.kube/vcluster-vcluster.yaml list --all-namespaces
+vcluster_kubeconfig_path: "~/.kube/vcluster-{{ vcluster_name }}.yaml"
+
+# Additional Helm values, merged into the ones of this role, see
+# https://www.vcluster.com/docs/vcluster/configure/vcluster-yaml/
+vcluster_extra_values: {}
+
+# Directory of the vcluster CLI, installed unless a vcluster CLI of vcluster_version is already on the PATH. The
+# default in the home directory of the SSH user needs no sudo; Ubuntu adds it to the PATH of login shells once it
+# exists.
+vcluster_cli_install_dir: "~/.local/bin"

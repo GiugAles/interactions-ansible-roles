@@ -1,0 +1,78 @@
+---
+# The module only upgrades the release when the chart version or the values differ, which keeps repeated runs
+# idempotent
+- name: Install or upgrade the vcluster {{ vcluster_name }}
+  kubernetes.core.helm:
+    release_name: "{{ vcluster_name }}"
+    release_namespace: "{{ vcluster_namespace }}"
+    create_namespace: true
+    chart_repo_url: "{{ vcluster_chart_repo_url }}"
+    chart_ref: vcluster
+    chart_version: "{{ vcluster_version }}"
+    release_values: "{{ vcluster_release_values }}"
+    wait: true
+    wait_timeout: "{{ vcluster_wait_timeout }}"
+    kubeconfig: "{{ vcluster_host_kubeconfig | default(omit, true) }}"
+
+# vcluster writes the kubeconfig into the secret vc-<name> once its API runs, and rewrites it after a change of
+# exportKubeConfig, so wait for the one with the expected server
+- name: Read the kubeconfig of the vcluster
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --namespace {{ vcluster_namespace }}
+      get secret vc-{{ vcluster_name }} --output jsonpath={.data.config}
+  environment: "{{ vcluster_kube_env }}"
+  register: vcluster_kubeconfig_secret
+  changed_when: false
+  failed_when: false
+  retries: 36
+  delay: 5
+  until: >-
+    vcluster_kubeconfig_secret.rc == 0 and vcluster_kubeconfig_secret.stdout | length > 0
+    and (vcluster_kubeconfig_secret.stdout | b64decode | from_yaml).clusters[0].cluster.server
+        == vcluster_service_server
+  no_log: true
+
+- name: Check that the vcluster wrote its kubeconfig
+  ansible.builtin.assert:
+    that: vcluster_kubeconfig_secret.stdout | default('') | length > 0
+    fail_msg: >-
+      The vcluster did not write its kubeconfig into the secret vc-{{ vcluster_name }}, see
+      `kubectl --namespace {{ vcluster_namespace }} logs statefulset/{{ vcluster_name }}`
+    quiet: true
+
+- name: Remember the kubeconfig of the vcluster
+  ansible.builtin.set_fact:
+    vcluster_kubeconfig: "{{ vcluster_kubeconfig_secret.stdout | b64decode }}"
+  no_log: true
+
+- name: Create the directory of the kubeconfig of the vcluster
+  ansible.builtin.file:
+    path: "{{ vcluster_kubeconfig_path | dirname }}"
+    state: directory
+    mode: "0700"
+
+- name: Write the kubeconfig of the vcluster for the target host
+  ansible.builtin.copy:
+    dest: "{{ vcluster_kubeconfig_path }}"
+    content: "{{ vcluster_node_kubeconfig | to_nice_yaml }}"
+    mode: "0600"
+  register: vcluster_kubeconfig_file
+  diff: false
+  no_log: true
+
+- name: Check that the target host reaches the API of the vcluster
+  ansible.builtin.command:
+    cmd: kubectl --kubeconfig {{ vcluster_kubeconfig_file.dest }} get namespace default --output name
+  register: vcluster_api_check
+  changed_when: false
+  retries: 12
+  delay: 5
+  until: vcluster_api_check.rc == 0
+
+- name: Show how to reach the vcluster
+  ansible.builtin.debug:
+    msg:
+      - "vcluster {{ vcluster_name }} {{ vcluster_version }} runs in the namespace {{ vcluster_namespace }}"
+      - "Pods of the host cluster reach its API as {{ vcluster_service_server }}"
+      - "helm and kubectl on {{ inventory_hostname }}: --kubeconfig {{ vcluster_kubeconfig_file.dest }}"

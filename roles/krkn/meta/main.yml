@@ -1,0 +1,17 @@
+---
+galaxy_info:
+  author: Alessandro Giugno
+  description: Install the krkn chaos engineering operator, its console and krknctl, and register target clusters
+  company: ""
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - all
+  galaxy_tags:
+    - kubernetes
+    - chaos
+    - helm
+
+dependencies: []
